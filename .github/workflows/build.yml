@@ -15,7 +15,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        dkp-pacman -Syu --noconfirm switch-nlohmann-json
+        dkp-pacman -Syu --noconfirm nlohmann-json
       
     - name: Build
       run: make
