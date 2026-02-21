@@ -13,8 +13,8 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       
-    - name: Install SDL2 portlibs
-      run: dkp-pacman -Sy --noconfirm switch-sdl2 switch-sdl2_image switch-sdl2_ttf switch-freetype switch-libpng switch-libjpeg-turbo
+    - name: Download stb_image header (JPEG decoder, no pacman needed)
+      run: curl -fsSL https://raw.githubusercontent.com/nothings/stb/master/stb_image.h -o include/stb_image.h
       
     - name: Build
       run: make

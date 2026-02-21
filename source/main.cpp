@@ -1,23 +1,22 @@
-// KatanaReaderNX - Native MangaKatana Reader for Nintendo Switch
-// Phase 3: SDL2 Portrait Mode Image Renderer
+// KatanaReaderNX – Native libnx Framebuffer Manga Reader
+// Uses stb_image.h for JPEG decoding (zero extra dependencies)
+// and libnx framebufferCreate for rendering in portrait mode.
 
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_image.h>
-#include <SDL2/SDL_ttf.h>
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+#include <algorithm>
 #include <curl/curl.h>
 #include <regex>
 #include <string>
 #include <switch.h>
 #include <vector>
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Globals
-// ─────────────────────────────────────────────────────────────────────────────
-SDL_Window *gWindow = nullptr;
-SDL_Renderer *gRenderer = nullptr;
 
-std::vector<std::string> chapterImages;
-std::vector<SDL_Texture *> chapterTextures;
+// ─────────────────────────────────────────────────────────────────────────────
+// Display constants
+// ─────────────────────────────────────────────────────────────────────────────
+static const int SCREEN_W = 1280;
+static const int SCREEN_H = 720;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // libcurl helpers
@@ -26,178 +25,213 @@ struct MemoryBuffer {
   std::vector<uint8_t> data;
 };
 
-size_t WriteCallbackStr(void *contents, size_t size, size_t nmemb,
-                        void *userp) {
-  ((std::string *)userp)->append((char *)contents, size * nmemb);
-  return size * nmemb;
+size_t WriteCallbackStr(void *c, size_t s, size_t n, void *u) {
+  ((std::string *)u)->append((char *)c, s * n);
+  return s * n;
 }
-
-size_t WriteCallbackBin(void *contents, size_t size, size_t nmemb,
-                        void *userp) {
-  auto *buf = (MemoryBuffer *)userp;
-  uint8_t *ptr = (uint8_t *)contents;
-  buf->data.insert(buf->data.end(), ptr, ptr + size * nmemb);
-  return size * nmemb;
+size_t WriteCallbackBin(void *c, size_t s, size_t n, void *u) {
+  auto *b = (MemoryBuffer *)u;
+  uint8_t *p = (uint8_t *)c;
+  b->data.insert(b->data.end(), p, p + s * n);
+  return s * n;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HTML Parser – extract image URLs from MangaKatana JS arrays
+// HTML parser – pull image URLs out of MangaKatana JS arrays
 // ─────────────────────────────────────────────────────────────────────────────
+std::vector<std::string> chapterImages;
+
 bool extractMangaKatanaImages(const std::string &html) {
   chapterImages.clear();
-
-  std::regex arrayRegex(R"(var\s+[a-zA-Z_]\w*\s*=\s*\[(.*?)\];)");
-  std::smatch match;
-  std::string::const_iterator searchStart(html.cbegin());
-
-  while (std::regex_search(searchStart, html.cend(), match, arrayRegex)) {
-    std::string arrayContent = match[1];
-
-    if (arrayContent.find("imgs") != std::string::npos ||
-        arrayContent.find("http") != std::string::npos) {
-
-      std::regex urlRegex(R"('(.*?)')");
-      std::smatch urlMatch;
-      std::string::const_iterator us(arrayContent.cbegin());
-
-      while (std::regex_search(us, arrayContent.cend(), urlMatch, urlRegex)) {
-        std::string url = urlMatch[1];
-        if (url.rfind("http", 0) == 0 &&
-            url.find("mangakatana.com/imgs") != std::string::npos) {
-          chapterImages.push_back(url);
-        }
-        us = urlMatch.suffix().first;
+  std::regex arrayRx(R"(var\s+[a-zA-Z_]\w*\s*=\s*\[(.*?)\];)");
+  std::smatch m;
+  auto it = html.cbegin();
+  while (std::regex_search(it, html.cend(), m, arrayRx)) {
+    std::string arr = m[1];
+    if (arr.find("imgs") != std::string::npos) {
+      std::regex urlRx(R"('(https?://[^']+)')");
+      std::smatch um;
+      auto ui = arr.cbegin();
+      while (std::regex_search(ui, arr.cend(), um, urlRx)) {
+        if (um[1].str().find("mangakatana.com/imgs") != std::string::npos)
+          chapterImages.push_back(um[1]);
+        ui = um.suffix().first;
       }
       if (!chapterImages.empty())
         return true;
     }
-    searchStart = match.suffix().first;
+    it = m.suffix().first;
   }
   return false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Download one image URL into RAM, decode it, return SDL_Texture*
+// Download image into RAM
 // ─────────────────────────────────────────────────────────────────────────────
-SDL_Texture *downloadImage(CURL *curl, const std::string &url) {
+static const char *UA =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+MemoryBuffer downloadRaw(CURL *curl, const std::string &url) {
   MemoryBuffer buf;
   curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallbackBin);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
+  curl_easy_setopt(curl, CURLOPT_USERAGENT, UA);
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-  curl_easy_setopt(
-      curl, CURLOPT_USERAGENT,
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-
-  CURLcode res = curl_easy_perform(curl);
-  if (res != CURLE_OK || buf.data.empty())
-    return nullptr;
-
-  SDL_RWops *rw = SDL_RWFromMem(buf.data.data(), (int)buf.data.size());
-  SDL_Surface *surface = IMG_Load_RW(rw, 1); // 1 = close rw after load
-  if (!surface)
-    return nullptr;
-
-  SDL_Texture *texture = SDL_CreateTextureFromSurface(gRenderer, surface);
-  SDL_FreeSurface(surface);
-  return texture;
+  curl_easy_perform(curl);
+  return buf;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Portrait-mode page renderer: drawn at 90 degrees, fits Switch screen width
+// Blit RGBA pixels to the native libnx framebuffer in portrait mode.
+// The Switch framebuffer is RGBA8 linear at 1280×720.
+// We rotate the image 90° clockwise so a tall manga strip fills the screen
+// when the user holds the Switch sideways (Tate/Portrait mode).
 // ─────────────────────────────────────────────────────────────────────────────
-void renderPage(SDL_Texture *tex, int scrollY) {
-  if (!tex)
-    return;
+struct DecodedImage {
+  uint8_t *pixels = nullptr;
+  int w = 0, h = 0;
+  ~DecodedImage() {
+    if (pixels)
+      stbi_image_free(pixels);
+  }
+};
 
-  int texW, texH;
-  SDL_QueryTexture(tex, nullptr, nullptr, &texW, &texH);
+void blitPortrait(u32 *fb, const DecodedImage &img, int scrollY) {
+  // Scale so the original image height maps to SCREEN_W (720px)
+  // (we rotate 90°, so the image height becomes the display width)
+  float scaleY = (float)SCREEN_W / img.h; // fits height → screen width
+  float scaleX = scaleY;                  // keep aspect ratio
+  int dstH = (int)(img.w * scaleX);       // how tall on screen after rotation
 
-  // Switch screen is 1280x720. We rotate 90 degrees so the image fills the
-  // 720-wide "portrait" display. The rotated image's "width" maps to 720px.
-  float scale = 720.0f / (float)texH; // original height becomes screen width
-  int dstW = (int)(texW * scale);     // original width becomes screen height
+  for (int sy = 0; sy < SCREEN_H; sy++) {
+    // Map screen column (sy) back through the 90° rotation
+    // rotated y on screen ↔ original x axis
+    int origX = (int)((sy - scrollY) / scaleX);
+    if (origX < 0 || origX >= img.w)
+      continue;
 
-  SDL_Rect dst;
-  dst.x = 0;
-  dst.y = scrollY;
-  dst.w = 1280;
-  dst.h = dstW;
+    for (int sx = 0; sx < SCREEN_W; sx++) {
+      // rotated x on screen ↔ original y axis (reversed)
+      int origY = img.h - 1 - (int)(sx / scaleY);
+      if (origY < 0 || origY >= img.h)
+        continue;
 
-  // Rotate 90 degrees clockwise so a landscape image fills a portrait screen
-  SDL_Point center = {dst.w / 2, dst.h / 2};
-  SDL_RenderCopyEx(gRenderer, tex, nullptr, &dst, 90.0, &center, SDL_FLIP_NONE);
+      uint8_t *p = img.pixels + (origY * img.w + origX) * 4;
+      u32 colour = RGBA8(p[0], p[1], p[2], 0xFF);
+      fb[sy * SCREEN_W + sx] = colour;
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Minimal console helper – print without a full console init so we can display
+// progress before the framebuffer takes over.
+// ─────────────────────────────────────────────────────────────────────────────
+PrintConsole statusConsole;
+
+void showStatus(const char *msg) {
+  consoleClear();
+  printf("\x1b[1;1H\x1b[46;30m KatanaReaderNX \x1b[0m\n\n");
+  printf("%s\n", msg);
+  consoleUpdate(NULL);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main
 // ─────────────────────────────────────────────────────────────────────────────
 int main(int argc, char *argv[]) {
-
-  // libnx init
-  romfsInit();
-  socketInitializeDefault();
-  curl_global_init(CURL_GLOBAL_DEFAULT);
-
+  // libnx basics
+  consoleInit(&statusConsole);
   padConfigureInput(1, HidNpadStyleSet_NpadStandard);
   PadState pad;
   padInitializeDefault(&pad);
+  socketInitializeDefault();
+  curl_global_init(CURL_GLOBAL_DEFAULT);
 
-  // ── SDL2 init ──────────────────────────────────────────────────────────
-  SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK);
-  IMG_Init(IMG_INIT_JPG | IMG_INIT_PNG);
-  TTF_Init();
+  showStatus("Connecting to MangaKatana...");
 
-  gWindow = SDL_CreateWindow("KatanaReaderNX", SDL_WINDOWPOS_CENTERED,
-                             SDL_WINDOWPOS_CENTERED, 1280, 720,
-                             SDL_WINDOW_FULLSCREEN);
-  gRenderer = SDL_CreateRenderer(
-      gWindow, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-
-  // ── Phase 1: Fetch chapter HTML ────────────────────────────────────────
-  // Splash screen
-  SDL_SetRenderDrawColor(gRenderer, 10, 10, 20, 255);
-  SDL_RenderClear(gRenderer);
-  SDL_RenderPresent(gRenderer);
-
+  // ── Step 1: Fetch chapter HTML ─────────────────────────────────────────
   CURL *curl = curl_easy_init();
   std::string html;
-
   curl_easy_setopt(curl, CURLOPT_URL,
                    "https://mangakatana.com/manga/solo-leveling.16520/c200");
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallbackStr);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &html);
+  curl_easy_setopt(curl, CURLOPT_USERAGENT, UA);
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-  curl_easy_setopt(
-      curl, CURLOPT_USERAGENT,
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
   curl_easy_perform(curl);
 
-  bool parseOk = extractMangaKatanaImages(html);
+  showStatus("Parsing image list...");
 
-  // ── Phase 2: Download & decode images ─────────────────────────────────
-  if (parseOk) {
-    for (size_t i = 0; i < chapterImages.size(); i++) {
-      // Show loading progress
-      SDL_SetRenderDrawColor(gRenderer, 10, 10, 20, 255);
-      SDL_RenderClear(gRenderer);
-      SDL_RenderPresent(gRenderer);
-
-      SDL_Texture *tex = downloadImage(curl, chapterImages[i]);
-      chapterTextures.push_back(tex); // nullptr if failed
+  if (!extractMangaKatanaImages(html) || chapterImages.empty()) {
+    showStatus("[ERROR] Could not parse chapter images. Press [+] to exit.");
+    while (appletMainLoop()) {
+      padUpdate(&pad);
+      if (padGetButtonsDown(&pad) & HidNpadButton_Plus)
+        break;
+      consoleUpdate(NULL);
     }
+    curl_easy_cleanup(curl);
+    curl_global_cleanup();
+    socketExit();
+    consoleExit(NULL);
+    return 1;
   }
+
+  printf("Found %zu pages!\n", chapterImages.size());
+  consoleUpdate(NULL);
+
+  // ── Step 2: Download & decode one page at a time ───────────────────────
+  // We keep at most 3 decoded images in RAM to avoid OOM.
+  // For the initial test, load the first page only.
+  std::vector<DecodedImage *> pages(chapterImages.size(), nullptr);
+  int current = 0;
+
+  auto loadPage = [&](int idx) {
+    if (idx < 0 || idx >= (int)pages.size())
+      return;
+    if (pages[idx])
+      return; // already loaded
+    char buf[64];
+    snprintf(buf, sizeof(buf), "Downloading page %d / %zu...", idx + 1,
+             pages.size());
+    showStatus(buf);
+
+    MemoryBuffer raw = downloadRaw(curl, chapterImages[idx]);
+    if (raw.data.empty())
+      return;
+
+    auto *di = new DecodedImage();
+    int channels;
+    di->pixels = stbi_load_from_memory(raw.data.data(), (int)raw.data.size(),
+                                       &di->w, &di->h, &channels, 4);
+    if (!di->pixels) {
+      delete di;
+      return;
+    }
+    pages[idx] = di;
+  };
+
+  // Pre-load first page
+  loadPage(0);
   curl_easy_cleanup(curl);
 
-  // ── Phase 3: Render loop ───────────────────────────────────────────────
-  int currentPage = 0;
+  // ── Step 3: Framebuffer rendering loop ────────────────────────────────
+  consoleExit(NULL); // done with text console, switch to raw framebuffer
+
+  Framebuffer fb;
+  framebufferCreate(&fb, nwindowGetDefault(), SCREEN_W, SCREEN_H,
+                    PIXEL_FORMAT_RGBA_8888, 2);
+  framebufferMakeLinear(&fb);
+
   int scrollY = 0;
-  int scrollSpeed = 30;
+  int scrollStep = 20;
   bool running = true;
 
   while (running && appletMainLoop()) {
@@ -210,50 +244,43 @@ int main(int argc, char *argv[]) {
 
     // Page navigation
     if (kDown & HidNpadButton_R) {
-      currentPage = std::min(currentPage + 1, (int)chapterTextures.size() - 1);
+      current = std::min(current + 1, (int)pages.size() - 1);
       scrollY = 0;
+      loadPage(current);
     }
     if (kDown & HidNpadButton_L) {
-      currentPage = std::max(currentPage - 1, 0);
+      current = std::max(current - 1, 0);
       scrollY = 0;
     }
 
-    // Scrolling (D-Pad Up/Down)
+    // Scroll
     if (kHeld & HidNpadButton_Down)
-      scrollY -= scrollSpeed;
+      scrollY -= scrollStep;
     if (kHeld & HidNpadButton_Up)
-      scrollY += scrollSpeed;
+      scrollY += scrollStep;
     if (scrollY > 0)
-      scrollY = 0; // cap at top
+      scrollY = 0;
 
-    // Clear
-    SDL_SetRenderDrawColor(gRenderer, 10, 10, 20, 255);
-    SDL_RenderClear(gRenderer);
+    // Draw
+    u32 stride;
+    u32 *framebuf = (u32 *)framebufferBegin(&fb, &stride);
 
-    if (!parseOk || chapterTextures.empty()) {
-      // Error state – nothing to draw
-    } else {
-      SDL_Texture *tex = chapterTextures[currentPage];
-      if (tex) {
-        renderPage(tex, scrollY);
-      }
+    // Clear to dark background
+    for (int i = 0; i < SCREEN_W * SCREEN_H; i++)
+      framebuf[i] = RGBA8(15, 15, 25, 255);
+
+    if (pages[current]) {
+      blitPortrait(framebuf, *pages[current], scrollY);
     }
 
-    SDL_RenderPresent(gRenderer);
+    framebufferEnd(&fb);
   }
 
-  // ── Cleanup ───────────────────────────────────────────────────────────
-  for (auto *t : chapterTextures)
-    if (t)
-      SDL_DestroyTexture(t);
-
-  SDL_DestroyRenderer(gRenderer);
-  SDL_DestroyWindow(gWindow);
-  TTF_Quit();
-  IMG_Quit();
-  SDL_Quit();
+  // Cleanup
+  framebufferClose(&fb);
+  for (auto *p : pages)
+    delete p;
   curl_global_cleanup();
   socketExit();
-  romfsExit();
   return 0;
 }
