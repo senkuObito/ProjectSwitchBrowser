@@ -7,7 +7,6 @@
 #include <sys/stat.h>
 #include <vector>
 
-
 using json = nlohmann::json;
 
 struct Bookmark {
@@ -52,16 +51,15 @@ void saveBookmarks() {
 }
 
 void launchBrowser(const char *url) {
-  WebCommonConfig config;
-  Result rc = webPageCreate(&config, url);
-  if (R_SUCCEEDED(rc)) {
-    webConfigSetScreenShot(&config, true);
-    webConfigSetBootDisplayKind(&config, WebBootDisplayKind_White);
-    webConfigSetBackgroundKind(&config, WebBackgroundKind_Default);
-    webConfigSetFooterFixedKind(&config, WebFooterFixedKind_Hidden);
-    WebCommonReply out;
-    webConfigShow(&config, &out);
-  }
+  WebWifiConfig config;
+  Uuid uuid = {0};
+
+  // Use Captive Portal Mode (WebWifiConfig) to completely bypass the
+  // 2800-1006 DNS error caused by 90DNS or Exosphere blocking Nintendo servers.
+  webWifiCreate(&config, url, url, uuid, 0);
+
+  WebWifiReturnValue out;
+  webWifiShow(&config, &out);
 }
 
 void promptKeyboard(char *outBuffer, size_t outSize, const char *initialText,
