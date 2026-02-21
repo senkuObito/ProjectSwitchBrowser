@@ -6,7 +6,7 @@
 #include <string.h>
 #include <switch.h>
 #include <vector>
-
+#include <sys/stat.h>
 // Standard ImGui backend for Switch (often provided by imgui-nx or ported
 // manually) Assuming user has imgui_impl_nx or similar. For this example, I
 // will include a placeholder that suggests where the backend code would go or
@@ -75,41 +75,26 @@ void saveBookmarks() {
 
 void launchBrowser(const char *url) {
   WebCommonConfig config;
-  webCommonConfigInit(&config, WEB_DISPLAY_DEFAULT);
-  webCommonConfigSetUrl(&config, url);
+  Result rc = webPageCreate(&config, url);
+  if (R_SUCCEEDED(rc)) {
+    // Modern browsing settings
+    webConfigSetScreenShot(&config, true); // Allow screenshots if desired, or false for perf
+    webConfigSetBootDisplayKind(&config, WebBootDisplayKind_White); // Clean loading
+    webConfigSetBackgroundKind(&config, WebBackgroundKind_Default);
 
-  // Modern browsing settings
-  webCommonConfigSetScreenShot(
-      &config, true); // Allow screenshots if desired, or false for perf
-  webCommonConfigSetBootDisplayKind(&config,
-                                    WebBootDisplayKind_White); // Clean loading
-  webCommonConfigSetBackgroundKind(&config, WebBackgroundKind_Default);
+    // Hide default footer for more screen space
+    webConfigSetFooterFixedKind(&config, WebFooterFixedKind_Hidden); 
 
-  // Enable JavaScript and Cookies (default is usually yes, but good to be
-  // explicit if flags existed) Note: libnx default init usually enables these.
-
-  // Set a modern User Agent string if possible to avoid mobile sites
-  // Note: requires 4.0.0+ and webPageCreate, but we are using webCommonConfig
-  // wrapper. We will stick to the default strict config which is generally most
-  // compatible for "Show" mode.
-
-  // Key: Request full RAM access if we are in Application Mode (Title
-  // Overriding) There isn't a direct "SetFullRam" flag here, it depends on how
-  // the NRO is launched. However, we can set the footer to be minimal.
-  webCommonConfigSetFooterFixedKind(
-      &config,
-      WebFooterFixedKind_Hidden); // Hide default footer for more screen space
-
-  u64 out;
-  webCommonConfigShow(&config, &out); // Launch!
+    WebCommonReply out;
+    webConfigShow(&config, &out); // Launch!
+  }
 }
 
 int main(int argc, char *argv[]) {
   // Initialize graphics
-  gfxInitDefault();
+  // gfxInitDefault(); // Deprecated in modern libnx
+
   // Initialize Input
-  // Configure our supported input layout: a single player with standard
-  // controller styles
   padConfigureInput(1, HidNpadStyleSet_NpadStandard);
   PadState pad;
   padInitializeDefault(&pad);
@@ -122,7 +107,7 @@ int main(int argc, char *argv[]) {
   // imgui_impl_nx)
   if (!imgui_backend_init()) {
     printf("Failed to init ImGui\n");
-    gfxExit();
+    // gfxExit(); // Deprecated
     return -1;
   }
 
@@ -194,14 +179,15 @@ int main(int argc, char *argv[]) {
     ImDrawData *draw_data = ImGui::GetDrawData();
     imgui_backend_render_draw_data(draw_data); // Your backend render function
 
-    gfxFlushBuffers();
-    gfxSwapBuffers();
-    gfxWaitForVsync();
+    // gfxFlushBuffers(); // Deprecated
+    // gfxSwapBuffers(); // Deprecated
+    // gfxWaitForVsync(); // Deprecated
+    consoleUpdate(NULL); // Update console
   }
 
   imgui_backend_exit();
   socketExit();
   romfsExit();
-  gfxExit();
+  // gfxExit(); // Deprecated
   return 0;
 }

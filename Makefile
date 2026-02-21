@@ -13,6 +13,11 @@ SOURCES		:=	source
 DATA		:=	data
 INCLUDES	:=	include
 
+export DEVKITPRO := C:/devkitPro
+export DEVKITARM := C:/devkitPro/devkitARM
+export DEVKITPPC := C:/devkitPro/devkitPPC
+
+include $(DEVKITPRO)/libnx/switch_rules
 #---------------------------------------------------------------------------------
 # options for code generation
 #---------------------------------------------------------------------------------
@@ -21,12 +26,12 @@ ARCH	:=	-march=armv8-a -mtune=cortex-a57 -mtp=soft -fPIE
 CFLAGS	:=	-g -Wall -O2 -ffunction-sections \
 			$(ARCH) $(DEFINES)
 
-CFLAGS	+=	$(INCLUDE) -D__SWITCH__
+CFLAGS	+=	$(INCLUDE) -D__SWITCH__ -DIMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS
 
-CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17
+CXXFLAGS	:= $(CFLAGS) -fno-rtti -std=gnu++17
 
 ASFLAGS	:=	-g $(ARCH)
-LDFLAGS	:=	-specs=specs/nx_nx.specs -g $(ARCH) -Wl,-Map,$(NOTDIR).map
+LDFLAGS	:=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(NOTDIR).map
 
 LIBS	:= -lnx
 
