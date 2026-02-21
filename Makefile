@@ -37,7 +37,7 @@ CXXFLAGS	:= $(CFLAGS) -fno-rtti -std=gnu++17
 ASFLAGS	:=	-g $(ARCH)
 LDFLAGS	:=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(NOTDIR).map
 
-LIBS	:= `$(PREFIX)pkg-config --libs libcurl` -lnx
+LIBS	:= `$(PREFIX)pkg-config --libs SDL2_image SDL2_ttf SDL2 libcurl` -lnx
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
