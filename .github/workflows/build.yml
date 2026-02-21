@@ -13,14 +13,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       
-    - name: Install dependencies manually (Bypass 403)
-      run: |
-        curl -A "Mozilla/5.0" -L -o sdl2.pkg.tar.zst "https://pkg.devkitpro.org/packages/switch/switch-sdl2-2.28.5-4-any.pkg.tar.zst"
-        curl -A "Mozilla/5.0" -L -o mesa.pkg.tar.zst "https://pkg.devkitpro.org/packages/switch/switch-mesa-20.1.0-5-any.pkg.tar.zst"
-        curl -A "Mozilla/5.0" -L -o glad.pkg.tar.xz "https://pkg.devkitpro.org/packages/switch/switch-glad-0.1.27-1-any.pkg.tar.xz"
-        curl -A "Mozilla/5.0" -L -o drm.pkg.tar.xz "https://pkg.devkitpro.org/packages/switch/switch-libdrm_nouveau-1.0.1-2-any.pkg.tar.xz"
-        dkp-pacman -U --noconfirm sdl2.pkg.tar.zst mesa.pkg.tar.zst glad.pkg.tar.xz drm.pkg.tar.xz
-        
     - name: Build
       run: make
       

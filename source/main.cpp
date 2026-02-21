@@ -1,36 +1,12 @@
 #include <fstream>
-#include <imgui.h>
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <stdio.h>
 #include <string.h>
 #include <switch.h>
-#include <vector>
 #include <sys/stat.h>
-// Standard ImGui backend for Switch (often provided by imgui-nx or ported
-// manually) Assuming user has imgui_impl_nx or similar. For this example, I
-// will include a placeholder that suggests where the backend code would go or
-// uses a common homebrew structure. In many simple homebrew, we use a simple
-// loop with helper functions.
+#include <vector>
 
-// #include "imgui_impl_nx.h" // Uncomment if you have the backend header
-
-// Update this to match your ImGui backend function names (e.g. imgui_nx_init)
-// Common homebrew backend signatures:
-// bool imgui_backend_init();
-// void imgui_backend_new_frame();
-// void imgui_backend_render_draw_data(ImDrawData* draw_data);
-// void imgui_backend_exit();
-
-// If you link against a library like switch-imgui, check its documentation.
-// For this example, we assume you copied the source files into `source/` and
-// implemented these helpers or use `imgui_impl_nx`.
-extern "C" {
-void imgui_backend_new_frame();
-void imgui_backend_render_draw_data(ImDrawData *draw_data);
-bool imgui_backend_init();
-void imgui_backend_exit();
-}
 
 using json = nlohmann::json;
 
@@ -42,6 +18,7 @@ struct Bookmark {
 std::vector<Bookmark> bookmarks;
 char currentUrl[512] = "https://www.google.com";
 const char *bookmarksFile = "sdmc:/config/lightbrowser/bookmarks.json";
+int selectedIndex = 0;
 
 void loadBookmarks() {
   std::ifstream file(bookmarksFile);
@@ -54,13 +31,14 @@ void loadBookmarks() {
         bookmarks.push_back({item["name"], item["url"]});
       }
     } catch (...) {
-      std::cout << "Error parsing bookmarks." << std::endl;
+      printf("Error parsing bookmarks.\n");
     }
     file.close();
   } else {
     // Defaults
-    bookmarks.push_back({"Google", "https://google.com"});
-    bookmarks.push_back({"GBATemp", "https://gbatemp.net"});
+    bookmarks.push_back({"Google", "https://google.com/"});
+    bookmarks.push_back({"GBATemp", "https://gbatemp.net/"});
+    bookmarks.push_back({"YouTube", "https://youtube.com/"});
   }
 }
 
@@ -77,117 +55,152 @@ void launchBrowser(const char *url) {
   WebCommonConfig config;
   Result rc = webPageCreate(&config, url);
   if (R_SUCCEEDED(rc)) {
-    // Modern browsing settings
-    webConfigSetScreenShot(&config, true); // Allow screenshots if desired, or false for perf
-    webConfigSetBootDisplayKind(&config, WebBootDisplayKind_White); // Clean loading
+    webConfigSetScreenShot(&config, true);
+    webConfigSetBootDisplayKind(&config, WebBootDisplayKind_White);
     webConfigSetBackgroundKind(&config, WebBackgroundKind_Default);
-
-    // Hide default footer for more screen space
-    webConfigSetFooterFixedKind(&config, WebFooterFixedKind_Hidden); 
-
+    webConfigSetFooterFixedKind(&config, WebFooterFixedKind_Hidden);
     WebCommonReply out;
-    webConfigShow(&config, &out); // Launch!
+    webConfigShow(&config, &out);
+  }
+}
+
+void promptKeyboard(char *outBuffer, size_t outSize, const char *initialText,
+                    const char *guideText) {
+  SwkbdConfig kbd;
+  Result rc = swkbdCreate(&kbd, 0);
+  if (R_SUCCEEDED(rc)) {
+    swkbdConfigMakePresetDefault(&kbd);
+    swkbdConfigSetInitialText(&kbd, initialText);
+    swkbdConfigSetGuideText(&kbd, guideText);
+    swkbdShow(&kbd, outBuffer, outSize);
+    swkbdClose(&kbd);
+  }
+}
+
+void drawMenu() {
+  consoleClear();
+  printf("\x1b[47;30m====================================================\x1b["
+         "0m\n");
+  printf("\x1b[47;30m                 LightBrowser NX                    "
+         "\x1b[0m\n");
+  printf("\x1b[47;30m====================================================\x1b["
+         "0m\n\n");
+
+  printf("  Navigate:   [Up/Down]\n");
+  printf("  Launch:     [A]\n");
+  printf("  Custom URL: [Y]\n");
+  printf("  Add Bkmrk:  [X]\n");
+  printf("  Exit:       [+]\n\n");
+
+  printf("------------------ Bookmarks -----------------------\n\n");
+
+  for (size_t i = 0; i < bookmarks.size(); i++) {
+    if ((int)i == selectedIndex) {
+      printf("  \x1b[46;30m> %-20s (%s)\x1b[0m\n", bookmarks[i].name.c_str(),
+             bookmarks[i].url.c_str());
+    } else {
+      printf("    %-20s (%s)\n", bookmarks[i].name.c_str(),
+             bookmarks[i].url.c_str());
+    }
   }
 }
 
 int main(int argc, char *argv[]) {
-  // Initialize graphics
-  // gfxInitDefault(); // Deprecated in modern libnx
-
-  // Initialize Input
+  // Initialize console and input
+  consoleInit(NULL);
   padConfigureInput(1, HidNpadStyleSet_NpadStandard);
   PadState pad;
   padInitializeDefault(&pad);
 
-  // Initialise console just in case we need debug
-  consoleInit(NULL);
-
-  // Initialize ImGui backend
-  // Note: You need to link/include imgui and a switch backend (e.g.,
-  // imgui_impl_nx)
-  if (!imgui_backend_init()) {
-    printf("Failed to init ImGui\n");
-    // gfxExit(); // Deprecated
-    return -1;
+  // Check Applet Mode
+  if (appletGetAppletType() != AppletType_Application &&
+      appletGetAppletType() != AppletType_SystemApplication) {
+    consoleClear();
+    printf("\n\n\n  \x1b[31mError: Applet Mode Detected!\x1b[0m\n\n");
+    printf("  LightBrowser requires Full RAM Mode to run the web applet.\n");
+    printf("  Please hold [R] while launching an installed game.\n\n");
+    printf("  Press [+] to exit.");
+    while (appletMainLoop()) {
+      padUpdate(&pad);
+      if (padGetButtonsDown(&pad) & HidNpadButton_Plus)
+        break;
+      consoleUpdate(NULL);
+    }
+    consoleExit(NULL);
+    return 0;
   }
 
-  // Initialize file system
   romfsInit();
-  socketInitializeDefault(); // For networking if needed
+  socketInitializeDefault();
 
-  // Create config dir if not exists
   mkdir("sdmc:/config", 0777);
   mkdir("sdmc:/config/lightbrowser", 0777);
-
   loadBookmarks();
+
+  drawMenu();
 
   while (appletMainLoop()) {
     padUpdate(&pad);
     u64 kDown = padGetButtonsDown(&pad);
 
-    if (kDown & HidNpadButton_Plus)
-      break; // Exit
-
-    imgui_backend_new_frame();
-
-    // UI
-    {
-      ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
-      ImGui::SetNextWindowSize(ImVec2(1280, 720), ImGuiCond_Always);
-      ImGui::Begin("LightBrowser", NULL,
-                   ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-                       ImGuiWindowFlags_NoResize |
-                       ImGuiWindowFlags_NoSavedSettings);
-
-      ImGui::Text("Enter URL:");
-      ImGui::InputText("##url", currentUrl, sizeof(currentUrl));
-      ImGui::SameLine();
-      if (ImGui::Button("Go!")) {
-        launchBrowser(currentUrl);
-      }
-
-      ImGui::Separator();
-      ImGui::Text("Bookmarks:");
-
-      for (const auto &b : bookmarks) {
-        if (ImGui::Button(b.name.c_str())) {
-          snprintf(currentUrl, sizeof(currentUrl), "%s", b.url.c_str());
-          launchBrowser(currentUrl);
-        }
-        ImGui::SameLine();
-        ImGui::TextDisabled("%s", b.url.c_str());
-      }
-
-      // Add bookmark section
-      ImGui::Separator();
-      static char newName[64] = "";
-      static char newUrl[512] = "";
-      ImGui::InputText("Name", newName, sizeof(newName));
-      ImGui::InputText("Address", newUrl, sizeof(newUrl));
-      if (ImGui::Button("Add Bookmark")) {
-        bookmarks.push_back({newName, newUrl});
-        saveBookmarks();
-        memset(newName, 0, sizeof(newName));
-        memset(newUrl, 0, sizeof(newUrl));
-      }
-
-      ImGui::End();
+    if (kDown & HidNpadButton_Plus) {
+      break;
     }
 
-    // Rendering
-    ImGui::Render();
-    ImDrawData *draw_data = ImGui::GetDrawData();
-    imgui_backend_render_draw_data(draw_data); // Your backend render function
+    if (kDown & HidNpadButton_Down) {
+      selectedIndex++;
+      if (selectedIndex >= (int)bookmarks.size())
+        selectedIndex = 0;
+      drawMenu();
+    }
 
-    // gfxFlushBuffers(); // Deprecated
-    // gfxSwapBuffers(); // Deprecated
-    // gfxWaitForVsync(); // Deprecated
-    consoleUpdate(NULL); // Update console
+    if (kDown & HidNpadButton_Up) {
+      selectedIndex--;
+      if (selectedIndex < 0)
+        selectedIndex = (int)bookmarks.size() - 1;
+      drawMenu();
+    }
+
+    if (kDown & HidNpadButton_A) {
+      if (!bookmarks.empty() && selectedIndex >= 0 &&
+          selectedIndex < (int)bookmarks.size()) {
+        launchBrowser(bookmarks[selectedIndex].url.c_str());
+        drawMenu(); // Redraw after returning from browser
+      }
+    }
+
+    if (kDown & HidNpadButton_Y) {
+      char urlBuf[512] = {0};
+      strncpy(urlBuf, "https://", sizeof(urlBuf));
+      promptKeyboard(urlBuf, sizeof(urlBuf), urlBuf, "Enter Website URL");
+      if (strlen(urlBuf) > 0) {
+        launchBrowser(urlBuf);
+        drawMenu();
+      }
+    }
+
+    if (kDown & HidNpadButton_X) {
+      char nameBuf[64] = {0};
+      char urlBuf[512] = {0};
+      strncpy(urlBuf, "https://", sizeof(urlBuf));
+
+      promptKeyboard(nameBuf, sizeof(nameBuf), "", "Enter Bookmark Name");
+      if (strlen(nameBuf) > 0) {
+        promptKeyboard(urlBuf, sizeof(urlBuf), urlBuf, "Enter Bookmark URL");
+        if (strlen(urlBuf) > 0) {
+          bookmarks.push_back({nameBuf, urlBuf});
+          saveBookmarks();
+          drawMenu();
+        }
+      }
+    }
+
+    consoleUpdate(
+        NULL); // Needs to be called every frame to update terminal graphics!
   }
 
-  imgui_backend_exit();
   socketExit();
   romfsExit();
-  // gfxExit(); // Deprecated
+  consoleExit(NULL);
   return 0;
 }
