@@ -37,13 +37,21 @@ CXXFLAGS	:= $(CFLAGS) -fno-rtti -std=gnu++17
 ASFLAGS	:=	-g $(ARCH)
 LDFLAGS	:=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(NOTDIR).map
 
-LIBS	:= `$(PREFIX)pkg-config --libs SDL2_image SDL2_ttf SDL2 libcurl` -lnx
+# Hardcoded portlibs flags — avoids PKG_CONFIG_PATH issues in CI
+LIBS	:= -lSDL2_image -lSDL2_ttf -lSDL2 \
+		   -lcurl -lmbedtls -lmbedx509 -lmbedcrypto \
+		   -ljpeg -lpng -lz -lbz2 -lfreetype \
+		   -lnx
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
 # include and lib
 #---------------------------------------------------------------------------------
 LIBDIRS	:= $(PORTLIBS) $(LIBNX)
+
+# Expose portlibs headers so SDL2/*.h etc. resolve correctly
+export C_INCLUDE_PATH	:= $(PORTLIBS)/include
+export CPLUS_INCLUDE_PATH	:= $(PORTLIBS)/include
 
 #---------------------------------------------------------------------------------
 # no real need to edit anything past this point unless you need to add user
