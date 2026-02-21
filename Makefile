@@ -13,9 +13,13 @@ SOURCES		:=	source
 DATA		:=	data
 INCLUDES	:=	include
 
-export DEVKITPRO := C:/devkitPro
-export DEVKITARM := C:/devkitPro/devkitARM
-export DEVKITPPC := C:/devkitPro/devkitPPC
+ifeq ($(strip $(DEVKITPRO)),)
+$(error "Please set DEVKITPRO in your environment. export DEVKITPRO=<path to>devkitpro")
+endif
+
+export DEVKITPRO
+export DEVKITARM = $(DEVKITPRO)/devkitARM
+export DEVKITPPC = $(DEVKITPRO)/devkitPPC
 
 include $(DEVKITPRO)/libnx/switch_rules
 #---------------------------------------------------------------------------------
@@ -33,7 +37,7 @@ CXXFLAGS	:= $(CFLAGS) -fno-rtti -std=gnu++17
 ASFLAGS	:=	-g $(ARCH)
 LDFLAGS	:=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(NOTDIR).map
 
-LIBS	:= -lnx
+LIBS	:= -lSDL2 -lEGL -lglapi -ldrm_nouveau -lnx
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
