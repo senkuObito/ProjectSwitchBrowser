@@ -209,7 +209,7 @@
 #define SDL_HAS_VULKAN SDL_VERSION_ATLEAST(2, 0, 6)
 #define SDL_HAS_OPEN_URL SDL_VERSION_ATLEAST(2, 0, 14)
 #if SDL_HAS_VULKAN
-#include <SDL_vulkan.h>
+// #include <SDL_vulkan.h>
 #endif
 
 // SDL Data
